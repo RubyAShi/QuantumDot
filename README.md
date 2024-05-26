@@ -1,4 +1,5 @@
 # Quantum dot data acquisation software
+## Examples can be found in 210903IV map.ipynb and 20230728 tempR.ipynb
 ### Developped based on the scanning SUQID software used by Moler group @ Stanford 
 ### Appended by Ruby Shi to include functions for electrical transport measurements
 
