@@ -1,5 +1,6 @@
 # Quantum dot data acquisation software
-### Developped based on the scanning SUQID software used by Moler group, Stanford
+### Developped based on the scanning SUQID software used by Moler group @ Stanford
+### Adapted by Ruby Shi to include functions for electrical transport measurements
 
 This package contains real-time functions to make electrical transport meausrements of a quantum dot, including functions that 
 
