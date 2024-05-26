@@ -1,0 +1,128 @@
+{
+    "instruments": {
+        "daq": {
+            "model": "NI USB-6363",
+            "name": "Dev2",
+            "channels": {
+                "analog_inputs": {
+                    "MAG": 0,
+                    "SUSCX": 16,
+                    "SUSCY": 18,
+                    "CAP": 3,
+                    "x": 4,
+                    "y": 5,
+                    "z": 6,
+                    "TEMPraw": 7,
+                    "LIA": 17,
+                    "G": 19,
+                    "IV":1,
+                    "IVY":2
+                },
+                "analog_outputs": {"x": 0,"y": 1,"z": 2,"G": 3},
+                "pf_inputs": {"meas_trigger": 0},
+                "counter_outputs": {"lockin_trigger": 0}
+            },
+            "rate": "100 kHz",
+            "max_rate": {
+                "analog_inputs": {
+                    "1 channel": "2 MHz",
+                    "multichannel": "1 MHz",
+                    "comment": "Multichannel value is aggregate for all ai channels."},
+                "analog_outputs": {
+                    "1 channels": "2.86 MHz",
+                    "2 channels": "2.00 MHz",
+                    "3 channels": "1.54 MHz",
+                    "4 channels": "1.25 MHz",
+                    "comment": "Max ao rates are per channel."
+                }
+            }
+        },
+        "ls372": {
+            "name": "ls372",
+            "address": "GPIB0::13::0::INSTR"
+        },
+        "ke2400": {
+            "name": "ke2400",
+            "address": "GPIB0::25::0::INSTR"
+        },
+        "ke2410": {
+            "name": "ke2410",
+            "address": "GPIB0::24::0::INSTR"
+        },
+        "lockins": {
+            "SUSC": {
+                "model": "SR830",
+                "address": "GPIB0::2::0::INSTR"},
+            "CAP": {
+                "model": "SR830",
+                "address": "GPIB0::6::0::INSTR"
+            }
+        },
+        "atto": {
+            "name": "atto",
+            "model": "ANC300",
+            "address": "ASRL1::INSTR",
+            "timeout": 5,
+            "terminator": "\r\n",
+            "stopbits": 1,
+            "baud_rate" : 38400,
+            "axes": {"x": 1,"y": 2,"z": 3, "theta": 4, "phi": 5},
+            "voltage_limits": {
+                "RT":{"x": " 30V","y": "30 V","z": "40 V", "theta": "25 V", "phi": "25 V"},
+                "LT":{"x": "60 V","y": "60 V","z": "65 V", "theta": "60 V", "phi": "60 V"}
+            },
+            "default_frequency": {"x": "200 Hz", "y": "300 Hz", "z": "400 Hz", "theta": "500 Hz", "phi": "500 Hz"},
+            "constants":{
+                "x": "0.5 um",
+                "y": "0.43 um",
+                "z": "0.25 um",
+                "theta": " deg",
+                "phi": " deg",
+                "comment": "Approximate um/step at 3 K, 60 V. Sign is relative to scanner sign. 2018/02/22"},
+            "history": {}
+        },
+        "scanner": {
+            "name": "benders",
+            "constants": {
+                "x": "12 um/V",
+                "y": "14 um/V",
+                "z": "2.5 um/V",
+                "T": "10um/V",
+                "comment": "um/V_daq (2020/07)"},
+            "voltage_limits":{
+                "RT":{"x": [-2, 2], "y": [-2, 2], "z": [-2, 2], "T":[-2,2]},
+                "LT":{"x": [-10, 10],"y": [-10, 10], "z": [-10, 10], "T":[-10, 10]},
+                "unit": "V",
+                "comment":"V_daq should never be outside of voltage_limits."},
+            "voltage_retract":{"RT": "-2 V","LT": "-10 V"},
+            "speed": {
+                "value": "2 V/s",
+                "comment":"Rate of movement of the scanner (when not scanning)."
+            },
+            "gate_speed": {
+                "value": "1 V/s",
+                "comment":"Rate of change of gate voltage."
+            },
+            "gate_range": [-8, 8],
+            "plane": {},
+            "cantilever": {
+                "calibration": "354 uV/pF",
+                "comment":"CAP lockin X reading, freq = 6.821 kHz, amp = 1 V"
+            }
+        }
+    },
+    "SQUID": {
+         "name": "SQUID",
+        "type": "susceptometer",
+        "description": "IBM 3um",
+        "modulation_width": ".145 V/Phi0",
+        "FC_PU_mutual": "1572 Phi0/A",
+        "feedback": {
+            "type": "NIST analog"
+        },
+        "dimensions": {}
+    },
+    "info": {
+        "timestamp_format":"%Y-%m-%d_%H:%M:%S"
+    }
+}
