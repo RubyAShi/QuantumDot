@@ -2,7 +2,7 @@
 ### Developped based on the scanning SUQID software used by Moler group @ Stanford 
 ### Appended by Ruby Shi to include functions for electrical transport measurements
 
-This package contains real-time functions to make electrical transport meausrements of a quantum dot or any other Van der Waals heterostructures, including functions that:
+This package contains real-time functions to make electrical transport meausrements of a quantum dot or any other Van der Waals heterostructures, including appended functions that:
 
 Acquire the current gate voltage from a DAQ output or Keithley
 
