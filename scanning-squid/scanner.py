@@ -108,28 +108,6 @@ class Scanner(Instrument):
                            set_cmd=getattr(self, '_goto_{}'.format(axis))
                            )
         
-    def get_pos(self) -> np.ndarray:
-        """Get current scanner [x, y, z] position.
-        Returns:
-            numpy.ndarray: pos
-                Array of current [x, y, z] scanner voltage.
-        """    
-        with nidaqmx.Task('get_pos_ai_task') as ai_task:
-            for ax in ['x', 'y', 'z']:
-                idx = self.metadata['daq']['channels']['analog_inputs'][ax]
-                channel = self.metadata['daq']['name'] + '/ai{}'.format(idx)
-                ai_task.ai_channels.add_ai_voltage_chan(channel, ax, min_val=-10, max_val=10)
-            pos_raw = list(np.round(ai_task.read(), decimals=3))
-        pos = []
-        for i, ax in enumerate(['x', 'y', 'z']):
-            ax_lim = sorted([lim.to('V').magnitude for lim in self.voltage_limits[self.temp][ax]])
-            if pos_raw[i] < ax_lim[0]:
-                pos.append(ax_lim[0])
-            elif pos_raw[i] > ax_lim[1]:
-                pos.append(ax_lim[1])
-            else:
-                pos.append(pos_raw[i])
-        return pos
 
     def check_gate(self, axis: str) -> float:
         """Get current gate voltage.
@@ -148,53 +126,7 @@ class Scanner(Instrument):
         return result
 
     
-    def goto(self, new_pos: List[float], retract_first: Optional[bool]=False,
-             speed: Optional[str]=None, quiet: Optional[bool]=False) -> None:
-        """Move scanner to given position.
-        By default moves all three axes simultaneously, if necessary.
-        Args:
-            new_pos: List of [x, y, z] scanner voltage to go to.
-            retract_first: If True, scanner retracts to value determined by self.temp,
-                then moves in the x,y plane, then moves in z to new_pos. Default: False.
-            speed: Speed at which to move the scanner (e.g. '2 V/s') in DAQ voltage units.
-                Default set in microscope configuration JSON file.
-            quiet: If True, only logs changes in logging.DEBUG mode.
-                (goto is called many times during, e.g., a scan.) Default: False.
-        """
-        old_pos = self.position()
-        if speed is None:
-            speed = self.speed.to('V/s').magnitude
-        else:
-            speed = self.Q_(speed).to('V/s').magnitude
-        for i, ax in enumerate(['x', 'y', 'z']):
-            ax_lim = sorted([lim.to('V').magnitude for lim in self.voltage_limits[self.temp][ax]])
-            if new_pos[i] < min(ax_lim) or new_pos[i] > max(ax_lim):
-                err = 'Requested position is out of range for {} axis. '
-                err += 'Voltage limits are {} V.'
-                raise ValueError(err.format(ax, ax_lim))
-        if not retract_first:
-            ramp = self.make_ramp(old_pos, new_pos, speed)
-            with nidaqmx.Task('goto_ao_task') as ao_task:
-                for axis in ['x', 'y', 'z']:
-                    idx = self.metadata['daq']['channels']['analog_outputs'][axis]
-                    channel = self.metadata['daq']['name'] + '/ao{}'.format(idx)
-                    ao_task.ao_channels.add_ao_voltage_chan(channel, axis)
-                ao_task.timing.cfg_samp_clk_timing(self.daq_rate, samps_per_chan=len(ramp[0]))
-                pts = ao_task.write(ramp, auto_start=False, timeout=60)
-                ao_task.start()
-                ao_task.wait_until_done(timeout=60)
-                log.debug('Wrote {} samples to {}.'.format(pts, ao_task.channel_names))
-        else:
-            self.retract(quiet=True)
-            cur_pos = self.get_pos()
-            self.goto([new_pos[0], new_pos[1], cur_pos[2]], quiet=True)
-            cur_pos = self.get_pos()
-            self.goto([cur_pos[0], cur_pos[1], new_pos[2]], quiet=True)
-        current_pos = self.position()
-        if quiet:
-            log.debug('Moved scanner from {} V to {} V.'.format(old_pos, current_pos))
-        else:
-             log.info('Moved scanner from {} V to {} V.'.format(old_pos, current_pos))
+
     
     def apply_gate(self, new_gate: float,
              gate_speed: Optional[str]=None, quiet: Optional[bool]=False) -> None:
@@ -279,50 +211,7 @@ class Scanner(Instrument):
         else:
              log.info('Changed gate from {} V to {} V at {} V/s in {} points.'.format(old_gate, current_gate, gate_speed, npt))
 
-    def retract(self, speed: Optional[str]=None, quiet: Optional[bool]=False) -> None:
-        """Retracts z-bender fully based on whether temp is LT or RT.
-        Args:
-                speed: Speed at which to move the scanner (e.g. '2 V/s') in DAQ voltage units.
-                    Default set in microscope configuration JSON file.
-        """
-        if speed is None:
-            speed = self.speed.to('V/s').magnitude
-        else:
-            speed = self.Q_(speed).to('V/s').magnitude
-        current_pos = self.position()
-        v_retract = self.Q_(self.voltage_retract[self.temp]).to('V').magnitude
-        self.goto([current_pos[0], current_pos[1], v_retract],
-            speed='{} V/s'.format(speed), quiet=quiet)
-    
-    def scan_line(self, scan_grids: Dict[str, np.ndarray], ao_channels: Dict[str, int],
-                  daq_rate: Union[int, float], counter: Any, reverse=False) -> None:
-        """Scan a single line of a plane.
-        Args:
-            scan_grids: Dict of {axis_name: axis_meshgrid} from utils.make_scan_grids().
-            ao_channels: Dict of {axis_name: ao_index} for the scanner ao channels.
-            daq_rate: DAQ sampling rate in Hz.
-            counter: utils.Counter instance, determines current line of the grid.
-            reverse: Determines scan direction (i.e. forward or backward).
-        """
-        daq_name = self.metadata['daq']['name']
-        self.ao_task = nidaqmx.Task('scan_line_ao_task')
-        out = []
-        line = counter.count
-        if reverse:
-            step = -1
-            last_point = 0
-        else:
-            step = 1
-            last_point = -1
-        for axis, idx in ao_channels.items():
-            if axis in ['x','y','z']:
-                out.append(scan_grids[axis][line][::step])
-                self.ao_task.ao_channels.add_ao_voltage_chan('{}/ao{}'.format(daq_name, idx), axis)
-        self.ao_task.timing.cfg_samp_clk_timing(daq_rate,
-                                                sample_mode=AcquisitionType.FINITE,
-                                                samps_per_chan=len(out[0]))
-        log.debug('Writing line {}.'.format(line))
-        self.ao_task.write(np.array(out), auto_start=False)
+
 
     def Kei_line_gate(self, gate_grids: Dict[str, np.ndarray], ao_channels: Dict[str, int],
                   daq_rate: Union[int, float], counter: Any, reverse=False) -> None:
@@ -440,106 +329,8 @@ class Scanner(Instrument):
         except IndexError:
             pass
 
-    def goto_start_of_next_line(self, scan_grids: Dict[str, np.ndarray], counter: Any, wait: Optional[bool]=False, retractfirst: Optional[bool]=False) -> None:
-        """Moves scanner to the start of the next line to scan.
-        Args:
-            scan_grids: Dict of {axis_name: axis_meshgrid} from utils.make_scan_grids().
-            counter: utils.Counter instance, determines current line of the grid.
-            wait: wait at the fisrt position of next line before start scan
-            retractfirst: retract first when scan finishes
-        """
-        line = counter.count
-        try:
-            start_of_next_line = [scan_grids[axis][line+1][0] for axis in ['x', 'y', 'z']]
-            self.goto(start_of_next_line, retract_first=retractfirst, quiet=True)
-            #wait 5 sec
-            if wait:
-                time.sleep(5)
-        #: If `line` is the last line in the scan, do nothing.
-        except IndexError:
-            pass
-
-    def check_for_td(self, tdc_plot: Any, data_set: Any, counter: Any) -> None:
-        """Check whether touchdown has occurred during a capacitive touchdown.
-        Args:
-            tdc_plot: plots.TDCPlot instance, which contains current data and parameters
-                of the touchdown Loop.
-            data_set: DataSet containing capacitance data generated by Loop.
-            counter: utils.Counter intance to keep track of which point in the Loop we're at.
-        """
-        #: If True, will break out of qcodes Loop and and atto.step loop (if applicable)
-        self.break_loop = False
-        self.td_has_occurred = False
-        #: Touchdown z position in DAQ voltage units.
-        self.td_height = None
-        tdc_plot.update(data_set)
-        pt = counter.count
-        #: If we've reached the last z position
-        if pt >= len(tdc_plot.heights):
-            return
-        cap_unit = tdc_plot.channels['CAP']['unit']
-        #: Initial capacitance should be zero for our capacitance bridges
-        initial_cap = self.Q_(tdc_plot.constants['initial_cap']).to(cap_unit).magnitude
-        #: Maximum allowed change in capacitance
-        max_deltaC = self.Q_(tdc_plot.constants['max_delta_cap']).to(cap_unit).magnitude
-        #: Maximum allowed |d(capacitance)/d(voltage)|
-        max_slope = self.Q_(tdc_plot.constants['max_slope']).to('{}/V'.format(cap_unit)).magnitude
-        prefactor = self.Q_(tdc_plot.prefactors['CAP'])
-        #: Minimum number of points to fit per line
-        nfitmin = tdc_plot.constants['nfitmin']
-        #: Width of window used to determine if touchdown has occurred
-        #: (should be greater than 2 * nfitmin)
-        nwindow = tdc_plot.constants['nwindow']
-        #: Minimum number of points to fit per line when determining touchdown point
-        #: (should be less than nfitmin)
-        ntest = tdc_plot.constants['ntest']
-        cdata = tdc_plot.cdata
-        hdata = tdc_plot.hdata
-        #: Some safety checks:
-        if pt > 1:
-            if any(abs(cdata[pt-i] - initial_cap) > max_deltaC for i in range(2)):
-                log.warning('Capacitance bridge is too unbalanced to continue.')
-                self.break_loop = True
-                return
-            if any(abs(cdata[pt-i] * self.ureg(cap_unit)/prefactor) > self.Q_('5 V') for i in range(2)):
-                log.warning('CAP_lockin is railing.')
-                self.break_loop = True
-                return
-        #: Partition data in window into two subsets,
-        #: fit a line to each subset, and repeat for next partition
-        #: Touchdown point is the partition point that minimizes the sum of squared residuals
-        if pt > nwindow:
-            #: index of partition boundary corresponding to minimum rms residual
-            imin = - nwindow + nfitmin 
-            rmsmin = np.inf
-            for i in range(-nwindow + nfitmin, -nfitmin):
-                p0, rms0 = utils.fit_line(hdata[-nwindow:i+1], cdata[-nwindow:i+1])
-                p1, rms1 = utils.fit_line(hdata[i:], cdata[i:])
-                rms = rms0 + rms1
-                if rms < rmsmin:
-                    imin = i
-                    rmsmin = rms
-            #: Get the slope of the two lines that minimize rms residual
-            x0 = hdata[-nwindow:imin+1]
-            p0, _ = utils.fit_line(x0, cdata[-nwindow:imin+1])
-            x1 = hdata[imin:]
-            p1, _ = utils.fit_line(x1, cdata[imin:])
-            tdc_plot.ax[0].plot(x0, p0[0] * x0 + p0[1], 'r-')
-            tdc_plot.ax[0].plot(x1, p1[0] * x1 + p1[1], 'r-')
-            tdc_plot.fig.canvas.draw()
-            tdc_plot.fig.show()
-            if abs(p0[0]) > max_slope:
-                log.warning('Pre-touchdown slope +/- {} {}/V is too big.'.format(p0[0], cap_unit))
-                self.break_loop = True
-                return
-            #: If the slopes are different enough, a touchdown has occurred
-            if abs(p0[0] - p1[0]) > max_slope:
-                self.break_loop = True
-                self.td_has_occurred = True
-                return
-
-
-
+   
+   
     def get_gate(self, gate_plot: Any, data_set: Any, counter: Any) -> None:
         """get resistance verses gate voltage in real time plot
 
@@ -582,86 +373,6 @@ class Scanner(Instrument):
             return
 
 
-    def get_td_height(self, tdc_plot: Any, task: bool=True) -> None:
-        """If a touchdown has occurred, finds the z voltage at which it occurred.
-        Args:
-            tdc_plot: plots.TDCPlot instance containing data from touchdown.
-            task: True if get_td_height is being called as a qcodes Task (no return value allowed).
-                Default True.
-        """
-        if self.td_has_occurred or not task:
-            cdata = tdc_plot.cdata
-            hdata = tdc_plot.hdata
-            cap_unit = tdc_plot.channels['CAP']['unit']
-            nwindow = tdc_plot.constants['nwindow']
-            ntest = tdc_plot.constants['ntest']
-            #: Partition data in window into two subsets,
-            #: fit a line to each subset, and repeat for next partition.
-            #: Touchdown point is the partition point that minimizes the sum of squared residuals
-            imin = -ntest
-            rmsmin = np.inf
-            for i in range(-nwindow + ntest, -ntest):
-                p0, rms0 = utils.fit_line(hdata[-nwindow:i+1], cdata[-nwindow:i+1])
-                p1, rms1 = utils.fit_line(hdata[i:], cdata[i:])
-                rms = rms0 + rms1
-                if rms < rmsmin:
-                    imin = i
-                    rmsmin = rms
-            #: Get the slope of the two lines that minimize rms residual
-            p0, _ = utils.fit_line(hdata[-nwindow:imin+1], cdata[-nwindow:imin+1])
-            p1, _ = utils.fit_line(hdata[imin:], cdata[imin:])
-            self.td_height = (p1[1]-p0[1]) / (p0[0] - p1[0])
-            tdc_plot.td_height = self.td_height
-            tdc_plot.pre_td_slope = '{} {}/V'.format(p0[0], cap_unit)
-            tdc_plot.post_td_slope = '{} {}/V'.format(p1[0], cap_unit)
-            utils.clear_artists(tdc_plot.ax[0])
-            tdc_plot.ax[0].plot(hdata, cdata, 'b.')
-            tdc_plot.ax[0].plot(hdata[-1], cdata[-1], 'r.')
-            tdc_plot.ax[0].plot(hdata[-nwindow:i+3], hdata[-nwindow:i+3] * p0[0] + p0[1], 'r-')
-            tdc_plot.ax[0].plot(hdata[i-2:], hdata[i-2:] * p1[0] + p1[1], 'r-')
-            tdc_plot.ax[0].set_title('Touchdown: {:.4} V'.format(self.td_height))
-            tdc_plot.fig.canvas.draw()
-            tdc_plot.fig.show()
-            log.info('Touchdown occurred at {:.4} V.'.format(self.td_height))
-            if self.td_height < 0:
-                msg = 'Touchdown occurred at a negative voltage. '
-                msg += 'Consider Atto stepping further from the sample '
-                msg += 'to touchdown at a positive voltage.'
-                log.warning(msg)
-            log.info('Pre-touchdown slope: {}.'.format(tdc_plot.pre_td_slope))
-            log.info('Post-touchdown slope: {}.'.format(tdc_plot.post_td_slope))
-        if not task:
-            return self.td_height
-
-    def load_surface(self, fname: str, function: Optional[str]='multiquadric', smooth: Optional[float]=0) -> None:
-        """Loads a previously acquired sample surface, updates self.metadata['plane'], self.metadata['td_grid'],
-            and self.surface_interp().
-        Args:
-            fname: Full file path for .mat file containing measured surface.
-            function: String defining the radial basis function for scipy.interpolate.Rbf (e.g. 'cubic' or 'linear').
-                Default: 'multiquadric', the scipy default value.
-            smooth: Smoothing factor for scipy.interpolate.Rbf. smooth=0 means exact interpolation. Only uses smoothing
-                if function='linear'. Default: 0
-        """
-        surf = io.loadmat(fname)
-        log.info('Updated surface from {}.'.format(fname))
-        self.metadata.update({
-            'td_grid': {
-                'x': surf['td_grid'][0][0][0],
-                'y': surf['td_grid'][0][0][1],
-                'z': surf['td_grid'][0][0][2]
-                }
-            })
-        self.metadata.update({
-            'plane': {
-                'x': surf['plane'][0][0][0][0][0],
-                'y': surf['plane'][0][0][1][0][0],
-                'z': surf['plane'][0][0][2][0][0]
-                }
-            })
-        if function != 'linear':
-            smooth = 0
-        self.surface_interp = Rbf(surf['td_grid'][0][0][0], surf['td_grid'][0][0][1], surf['td_grid'][0][0][2], function=function, smooth=smooth)
 
     def clear_instances(self):
         """Clear scanner instances.
@@ -721,32 +432,8 @@ class Scanner(Instrument):
         return np.array(ramp)
 
 
-    def _goto_x(self, xpos: float) -> None:
-        """Go to given x position.
-        Args:
-            xpos: x position to go to, in DAQ voltage.
-        """
-        current_pos = self.get_pos() 
-        self.goto([xpos, current_pos[1], current_pos[2]], quiet=True)
-        
-    def _goto_y(self, ypos: float) -> None:
-        """Go to given y position.
-        Args:
-            ypos: y position to go to, in DAQ voltage.
-        """
-        current_pos = self.position()
-        self.goto([current_pos[0], ypos, current_pos[2]], quiet=True)
-    
-    def _goto_z(self, zpos: float) -> None:
-        """Go to given z position.
-        Args:
-            zpos: z position to go to, in DAQ voltage.
-        """
-        current_pos = self.position()
-        self.goto([current_pos[0], current_pos[1], zpos], quiet=True)
+   
     def _goto_T(self, zpos: float) -> None:
-        """Go to given z position.
-        Args:
-            zpos: z position to go to, in DAQ voltage.
+        """Go to a given temperature.
         """
         pass
